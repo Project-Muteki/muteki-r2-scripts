@@ -11,13 +11,13 @@ class ParsedMemchunkMetadata(TypedDict):
     prev_chunk: int
     next_chunk: int
     size: int
-    tail: bool
+    occupied: bool
 
 
 def read_memchunk(r: r2pipe.open, offset: int) -> ParsedMemchunkMetadata:
     prev_chunk = r.cmdj(f'pv4j @ {offset}')[0]['value']
     next_tail = r.cmdj(f'pv4j @ {offset+4}')[0]['value']
-    tail = (next_tail & 1) == 0
+    occupied = (next_tail & 1) == 1
     next_chunk = next_tail & (~1)
 
     return {
@@ -25,7 +25,7 @@ def read_memchunk(r: r2pipe.open, offset: int) -> ParsedMemchunkMetadata:
         'prev_chunk': prev_chunk,
         'next_chunk': next_chunk,
         'size': next_chunk - offset,
-        'tail': tail,
+        'occupied': occupied,
     }
 
 if __name__ == '__main__':
@@ -38,14 +38,17 @@ if __name__ == '__main__':
     print('fs+ memchunk')
     while True:
         chunk = read_memchunk(r, offset)
+        if chunk['next_chunk'] == 0:
+            print(f'# {total_alloc:,} bytes total.')
+            break
+
         total_alloc += chunk['size']
-        print('#', hex(offset), '->', hex(chunk['next_chunk']))
+        print('#', hex(offset), '->', hex(chunk['next_chunk']), '(occupied)' if chunk["occupied"] else '(free)')
         print(f'f mch.{chunk["offset"]:08x}', chunk['size'], '@', hex(chunk['offset']))
         if expected_prev_offset != chunk['prev_chunk']:
             print(f'# WARNING: Memchunk has inconsistent link (previous chunk located @ {hex(expected_prev_offset)}, but current chunk links back to {hex(chunk["prev_chunk"])})')
-        if chunk['tail']:
-            print(f'# {total_alloc:,} bytes allocated.')
             break
+
         offset = chunk['next_chunk']
         expected_prev_offset = chunk['offset']
     print('fs- memchunk')
